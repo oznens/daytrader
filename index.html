@@ -27,7 +27,7 @@
   #status{font-size:12px; color:var(--muted); margin-left:auto;}
   #main{flex:1; display:flex; min-height:0;}
   #chartwrap{flex:1; position:relative; min-width:0;}
-  canvas{display:block; width:100%; height:100%; cursor:crosshair;}
+  canvas{display:block; width:100%; height:100%; cursor:crosshair; touch-action:none;}
   #side{width:300px; background:var(--panel); border-left:1px solid var(--border); overflow-y:auto; padding:10px; flex-shrink:0;}
   #side h2{font-size:13px; text-transform:uppercase; letter-spacing:.5px; color:var(--accent); margin:10px 0 6px; border-bottom:1px solid var(--border); padding-bottom:4px;}
   #side h2:first-child{margin-top:0;}
@@ -397,6 +397,8 @@ const cv = $('chart'), ctx = cv.getContext('2d');
 let candles = [], models = [], mIdx = 0, orderflow = 'Nötr', srcName = '';
 let view = {first:0, count:200};
 let mouse = null, dragging = null;
+let yman = null;   // manuel dikey aralık (sürükleyince devreye girer)
+let pinch = null, lastTap = 0;
 let priceDec = 2;
 
 function resize(){
@@ -412,6 +414,7 @@ function chartW(){ return cv.width/devicePixelRatio - AXIS_W; }
 function chartH(){ return cv.height/devicePixelRatio - AXIS_H; }
 
 function visRange(){
+  if(yman) return yman;
   const f = Math.max(0, Math.floor(view.first));
   const l = Math.min(candles.length, Math.ceil(view.first+view.count));
   let hi=-Infinity, lo=Infinity;
@@ -630,22 +633,80 @@ cv.addEventListener('wheel', e=>{
   view.count = newCount;
   clampView(); draw();
 },{passive:false});
-cv.addEventListener('mousedown', e=>{ dragging = {x:e.offsetX, first:view.first}; });
+function startDrag(x, y){
+  dragging = {x, y, first:view.first, vr0:{hi:vr.hi, lo:vr.lo}};
+}
+function doPan(x, y){
+  view.first = dragging.first - (x - dragging.x)/(chartW()/view.count);
+  clampView();
+  const dy = y - dragging.y;
+  if(Math.abs(dy) > 2){
+    const span = dragging.vr0.hi - dragging.vr0.lo;
+    const dp = dy/chartH()*span;
+    yman = {hi: dragging.vr0.hi + dp, lo: dragging.vr0.lo + dp};
+  }
+}
+cv.addEventListener('mousedown', e=>{ startDrag(e.offsetX, e.offsetY); });
 addEventListener('mouseup', ()=> dragging=null);
 cv.addEventListener('mousemove', e=>{
   mouse = {x:e.offsetX, y:e.offsetY};
-  if(dragging){
-    view.first = dragging.first - (e.offsetX-dragging.x)/(chartW()/view.count);
-    clampView();
-  }
+  if(dragging) doPan(e.offsetX, e.offsetY);
   draw();
 });
 cv.addEventListener('mouseleave', ()=>{ mouse=null; draw(); });
-cv.addEventListener('dblclick', ()=>{ fitView(); draw(); });
+cv.addEventListener('dblclick', ()=>{ yman=null; fitView(); draw(); });
+
+/* dokunmatik: tek parmak kaydır, iki parmak yakınlaştır, çift dokunuş sıfırla */
+function tpos(t){
+  const r = cv.getBoundingClientRect();
+  return {x: t.clientX - r.left, y: t.clientY - r.top};
+}
+cv.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  if(e.touches.length === 1){
+    const now = Date.now();
+    if(now - lastTap < 300){ lastTap = 0; yman=null; fitView(); draw(); return; }
+    lastTap = now;
+    const p = tpos(e.touches[0]);
+    startDrag(p.x, p.y);
+  } else if(e.touches.length === 2){
+    dragging = null;
+    const a = tpos(e.touches[0]), b = tpos(e.touches[1]);
+    pinch = {d: Math.hypot(a.x-b.x, a.y-b.y), count: view.count,
+             cx: (a.x+b.x)/2, first: view.first};
+  }
+},{passive:false});
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  if(pinch && e.touches.length === 2){
+    const a = tpos(e.touches[0]), b = tpos(e.touches[1]);
+    const d = Math.hypot(a.x-b.x, a.y-b.y);
+    if(d > 10){
+      const frac = pinch.cx / chartW();
+      const newCount = Math.max(30, Math.min(candles.length*1.2, pinch.count * pinch.d/d));
+      view.first = pinch.first + pinch.count*frac - newCount*frac;
+      view.count = newCount;
+      clampView();
+    }
+  } else if(dragging && e.touches.length === 1){
+    const p = tpos(e.touches[0]);
+    doPan(p.x, p.y);
+  }
+  draw();
+},{passive:false});
+cv.addEventListener('touchend', e=>{
+  if(e.touches.length < 2) pinch = null;
+  if(e.touches.length === 0) dragging = null;
+  else if(e.touches.length === 1 && !pinch){
+    const p = tpos(e.touches[0]);
+    startDrag(p.x, p.y);
+  }
+});
 function clampView(){
   view.first = Math.max(-view.count*0.3, Math.min(candles.length - view.count*0.5, view.first));
 }
 function fitView(){
+  yman = null;
   const m = models[mIdx];
   if(m){
     const start = m.origBox ? m.origBox.i1 : m.sweepOf.i;
