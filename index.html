@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MMXM Tarayıcı — MEXC Perpetual</title>
+<title>Efloud Tarzı Setup Tarayıcı — MEXC Perpetual</title>
 <style>
   :root{
     --bg:#0d1117; --panel:#161b22; --panel2:#1c232d; --border:#2d333b;
@@ -57,7 +57,7 @@
 </head>
 <body>
 <header>
-  <h1>🐉 MMXM <span>Tarayıcı · MEXC Perp</span></h1>
+  <h1>🏄 EFLOUD Tarzı <span>Setup Tarayıcı · MEXC Perp · gayriresmî</span></h1>
   <div class="ctrl">
     <input id="symbol" list="symlist" value="BTC_USDT" placeholder="COIN_USDT" spellcheck="false">
     <datalist id="symlist"></datalist>
@@ -70,8 +70,8 @@
       <option value="Day1">1G</option>
     </select>
     <select id="mode" title="İşaretleme stili ve giriş bölgesi mantığı">
+      <option value="efloud" selected>Efloud Stili</option>
       <option value="mmxm">MMXM Modeli</option>
-      <option value="efloud">Efloud Stili</option>
     </select>
     <button id="scan" class="primary">Tara 🔍</button>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer" title="Backtest'e göre önerilen mod: sadece HTF orderflow yönüyle uyumlu modelleri göster">
@@ -423,10 +423,11 @@ const THEMES = {
   efloud:{bg:'#FBF7EC', grid:'#E7E0CE', gridV:'#F0EADA', axis:'#6b6555', up:'#1a1a1a', down:'#1a1a1a',
           cross:'#55504060', tag:'#4a453a', text:'#1a1a1a'},
 };
-let MODE = 'mmxm';
+let MODE = 'efloud';
 const cv = $('chart'), ctx = cv.getContext('2d');
 let candles = [], models = [], allModels = [], mIdx = 0, orderflow = 'Nötr', srcName = '';
 let openLevels = []; // WO/PWO/MO/PMO (efloud modu)
+let srZones = [];    // HTF destek/direnç şerit bölgeleri (efloud modu)
 let view = {first:0, count:200};
 let mouse = null, dragging = null;
 let yman = null;   // manuel dikey aralık (sürükleyince devreye girer)
@@ -543,8 +544,8 @@ function draw(){
   ctx.save();
   ctx.beginPath(); ctx.rect(0,0,W,H); ctx.clip();
 
-  // WO/PWO/MO/PMO açılış seviyeleri (efloud modu)
-  if(MODE==='efloud') drawOpenLevels();
+  // HTF bölgeleri + WO/PWO/MO/PMO açılış seviyeleri (efloud modu)
+  if(MODE==='efloud'){ drawZones(); drawOpenLevels(); }
 
   // model katmanları (mumların altında)
   const m = models[mIdx];
@@ -586,6 +587,51 @@ function draw(){
       $('ohlc').textContent = `${fmtT(b.t)}  A:${fmtP(b.o)} Y:${fmtP(b.h)} D:${fmtP(b.l)} K:${fmtP(b.c)}`;
     }
   } else $('ohlc').textContent = srcName ? `Kaynak: ${srcName} · HTF Orderflow: ${orderflow}` : '';
+}
+
+// HTF destek/direnç bölgeleri: swing kümeleme → tam genişlik pastel şeritler
+function findZones(c){
+  const htf = aggregate(c, 6);
+  const sw = findSwings(htf, 2);
+  const a = avgAtr(c);
+  const tol = a*2.4;
+  const zones = [];
+  for(const s of sw){
+    const pt = {p:s.p, i:s.i*6};
+    let z = zones.find(z => Math.abs(z.p - pt.p) < tol);
+    if(z){
+      z.touches++;
+      z.p = (z.p*(z.touches-1) + pt.p)/z.touches;
+      z.hi = Math.max(z.hi, pt.p); z.lo = Math.min(z.lo, pt.p);
+      z.i1 = Math.min(z.i1, pt.i);
+    } else {
+      zones.push({p:pt.p, hi:pt.p, lo:pt.p, touches:1, i1:pt.i});
+    }
+  }
+  for(const z of zones){
+    z.hi = Math.max(z.hi, z.p + a*0.5);
+    z.lo = Math.min(z.lo, z.p - a*0.5);
+  }
+  return zones.filter(z=>z.touches>=3)
+              .sort((x,y)=>y.touches-x.touches)
+              .slice(0,5);
+}
+function drawZones(){
+  const last = candles[candles.length-1].c;
+  let major = null;
+  for(const z of srZones){
+    const res = z.p > last;
+    const b = box(z.i1, candles.length-1, z.hi, z.lo,
+      res ? 'rgba(233,106,98,.20)' : 'rgba(139,163,102,.22)', 'rgba(0,0,0,0)');
+    if(!major) major = z; // en çok test edilen bölge
+  }
+  if(major){
+    ctx.save(); ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1; ctx.setLineDash([5,4]);
+    const y = py(major.p);
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(chartW(), y); ctx.stroke(); ctx.restore();
+    ctx.fillStyle = '#1a1a1a'; ctx.font = '600 10px system-ui'; ctx.textAlign = 'left';
+    ctx.fillText('Major S/R', chartW()-150, y-4);
+  }
 }
 
 // haftalık/aylık açılış seviyeleri (Efloud'un WO/PWO/MO/PMO işaretleri)
@@ -717,17 +763,55 @@ function drawModelOverEfloud(m){
     ctx.beginPath(); ctx.moveTo(px(m.legLow.i), y); ctx.lineTo(px(m.msbBar), y); ctx.stroke(); ctx.restore();
     label('Yapı Kırılımı', px(m.msbBar)+6, y-9, '#1a1a1ae6', '#fff', 10);
   }
-  // giriş / stop / hedef — Efloud'un renkli fiyat etiketleri
+  // giriş / stop / TP1 / TP2 — Efloud'un renkli fiyat etiketleri + kademeli yönetim
   if(m.entry !== undefined && m.entryBar){
     hline(m.entry, m.entryBar, lineEnd, '#2962FF', null, 1.2);
     label('Giriş  ' + fmtP(m.entry), px(lineEnd)-90, py(m.entry)-9, '#2962FFee');
+    // projeksiyon kutusu: girişten TP2'ye (lavanta + % ölçüm)
+    const pj1 = Math.min(candles.length-1, m.entryBar+4), pj2 = Math.min(candles.length-1, m.entryBar+14);
+    const b = box(pj1, pj2, Math.max(m.entry,m.dol), Math.min(m.entry,m.dol),
+                  'rgba(121,134,225,.18)', 'rgba(80,95,200,.45)');
+    const cxm = b.x + b.w/2;
+    ctx.strokeStyle = '#2E7D32'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(cxm, py(m.entry)); ctx.lineTo(cxm, py(m.dol)); ctx.stroke();
+    ctx.beginPath();
+    const ay = py(m.dol), dirUp = m.dol > m.entry;
+    ctx.moveTo(cxm, ay); ctx.lineTo(cxm-4, ay + (dirUp?7:-7)); ctx.lineTo(cxm+4, ay + (dirUp?7:-7));
+    ctx.closePath(); ctx.fillStyle = '#2E7D32'; ctx.fill();
+    const pct = ((m.dol-m.entry)/m.entry*100).toFixed(2);
+    ctx.fillStyle = '#1a1a1a'; ctx.font = '600 10px system-ui'; ctx.textAlign='center';
+    ctx.fillText(`${fmtP(Math.abs(m.dol-m.entry))} (${pct}%)`, cxm, py(m.dol) + (dirUp?-6:14));
   }
   hline(m.stop, m.smr.i, lineEnd, '#D32F2F', [7,4], 1.1);
   label('Stop  ' + fmtP(m.stop), px(lineEnd)-90, py(m.stop)-9, '#D32F2Fee');
+  if(m.tp1 !== undefined){
+    hline(m.tp1, m.entryBar||m.smr.i, lineEnd, '#2E7D32', [3,3], 1);
+    label('TP1  ' + fmtP(m.tp1), px(lineEnd)-90, py(m.tp1)-9, '#2E7D32cc');
+  }
   hline(m.dol, m.dolIdx>=0 ? m.dolIdx : (m.entryBar||m.smr.i), lineEnd, '#2E7D32', [7,4], 1.2);
-  label('TP  ' + fmtP(m.dol), px(lineEnd)-90, py(m.dol)-9, '#2E7D32ee');
+  label('TP2  ' + fmtP(m.dol), px(lineEnd)-90, py(m.dol)-9, '#2E7D32ee');
   if(m.status==='done' && m.doneBar)
     label('TP ✔', px(m.doneBar)-14, py(m.dol) + (sell?8:-24), '#2E7D32');
+  // ⚡ not kutusu (Efloud'un beyaz zeminli açıklama notu)
+  if(m.entry !== undefined){
+    const note = sell
+      ? `⚡ Fiyat direnç bölgesinde likidite aldıktan sonra yapıyı kırdı. ${fmtP(m.entry)} retest'inde short; TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} üzeri kapanışta geçersiz.`
+      : `⚡ Fiyat destek bölgesinde likidite aldıktan sonra yapıyı kırdı. ${fmtP(m.entry)} retest'inde long; TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} altı kapanışta geçersiz.`;
+    ctx.font = '11px system-ui';
+    const tw = Math.min(360, ctx.measureText(note).width + 14);
+    const nx = Math.max(6, Math.min(chartW()-tw-8, px(m.entryBar)-tw/2));
+    const ny = sell ? Math.min(chartH()-60, py(m.stop)+16) : Math.max(8, py(m.stop)-52);
+    // satırlara böl
+    const words = note.split(' '); const lines = ['']; let li = 0;
+    for(const w of words){
+      if(ctx.measureText(lines[li]+' '+w).width > tw-14){ lines.push(w); li++; }
+      else lines[li] = (lines[li]?lines[li]+' ':'')+w;
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.92)';
+    ctx.fillRect(nx, ny, tw, lines.length*15+8);
+    ctx.fillStyle = '#1a1a1a'; ctx.textAlign='left'; ctx.textBaseline='top';
+    lines.forEach((ln,k)=>ctx.fillText(ln, nx+7, ny+5+k*15));
+  }
 }
 
 function drawModelOver(m){
@@ -890,8 +974,10 @@ function renderPanel(){
     <tr><td>HTF Orderflow (girişte)</td><td>${m.of || orderflow} ${m.ofOk ? '✓' : '✗'}</td></tr>
     <tr><td>Giriş (${ef?'EOB':'FVG'})</td><td>${m.entry!==undefined?fmtP(m.entry):'bekleniyor'}</td></tr>
     <tr><td>Stop (${ef?'deviation üstü':'SMR üstü'})</td><td>${fmtP(m.stop)}</td></tr>
-    <tr><td>${ef?'TP (karşı likidite)':'Hedef (DOL)'}</td><td>${fmtP(m.dol)}</td></tr>
-    <tr><td>R : R</td><td>${rr}</td></tr>`;
+    ${ef && m.tp1!==undefined ? `<tr><td>TP1 (ilk bölge · %50 kapat)</td><td>${fmtP(m.tp1)}</td></tr>` : ''}
+    <tr><td>${ef?'TP2 (karşı likidite)':'Hedef (DOL)'}</td><td>${fmtP(m.dol)}</td></tr>
+    <tr><td>R : R</td><td>${rr}</td></tr>
+    ${ef && m.entry!==undefined ? `<tr><td colspan="2" style="color:var(--muted);font-size:11.5px">TP1 sonrası stop → giriş (BE) çekilir, kalan %50 TP2'ye taşınır.</td></tr>` : ''}`;
   const wantFlow = sell ? 'Bearish' : 'Bullish';
   const range = Math.abs(m.stop - m.dol) || 1;
   // giriş, dealing range'in premium (sell) / discount (buy) tarafında mı?
@@ -969,6 +1055,18 @@ function redetect(){
     m.ofOk = (m.dir==='sell' && m.of==='Bearish') || (m.dir==='buy' && m.of==='Bullish');
   }
   computeOpenLevels();
+  srZones = MODE==='efloud' ? findZones(candles) : [];
+  // TP1: giriş ile TP2 (karşı likidite) arasındaki ilk HTF bölgesi, yoksa 1.5R
+  for(const m of allModels){
+    if(m.entry === undefined) continue;
+    const risk = Math.abs(m.stop - m.entry);
+    const between = srZones.filter(z => m.dir==='sell'
+      ? (z.p < m.entry - risk*0.8 && z.p > m.dol)
+      : (z.p > m.entry + risk*0.8 && z.p < m.dol));
+    m.tp1 = between.length
+      ? (m.dir==='sell' ? Math.max(...between.map(z=>z.p)) : Math.min(...between.map(z=>z.p)))
+      : (m.dir==='sell' ? m.entry - risk*1.5 : m.entry + risk*1.5);
+  }
   applyFilter();
 }
 $('mode').onchange = ()=>{ if(candles.length) redetect(); };
