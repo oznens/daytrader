@@ -586,7 +586,11 @@ function draw(){
       const b = candles[i];
       $('ohlc').textContent = `${fmtT(b.t)}  A:${fmtP(b.o)} Y:${fmtP(b.h)} D:${fmtP(b.l)} K:${fmtP(b.c)}`;
     }
-  } else $('ohlc').textContent = srcName ? `Kaynak: ${srcName} · HTF Orderflow: ${orderflow}` : '';
+  } else $('ohlc').textContent = srcName
+    ? (MODE==='efloud'
+        ? `$${$('symbol').value.split('_')[0]} | ${$('interval').selectedOptions[0].text} · HTF: ${orderflow} · ${srcName}`
+        : `Kaynak: ${srcName} · HTF Orderflow: ${orderflow}`)
+    : '';
 }
 
 // HTF destek/direnç bölgeleri: swing kümeleme → tam genişlik pastel şeritler
@@ -794,9 +798,10 @@ function drawModelOverEfloud(m){
     label('TP ✔', px(m.doneBar)-14, py(m.dol) + (sell?8:-24), '#2E7D32');
   // ⚡ not kutusu (Efloud'un beyaz zeminli açıklama notu)
   if(m.entry !== undefined){
+    const sym = '$' + $('symbol').value.split('_')[0];
     const note = sell
-      ? `⚡ Fiyat direnç bölgesinde likidite aldıktan sonra yapıyı kırdı. ${fmtP(m.entry)} retest'inde short; TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} üzeri kapanışta geçersiz.`
-      : `⚡ Fiyat destek bölgesinde likidite aldıktan sonra yapıyı kırdı. ${fmtP(m.entry)} retest'inde long; TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} altı kapanışta geçersiz.`;
+      ? `⚡ ${sym} | Setup — Fiyat direnç bölgesinden likidite alıp yapıyı kırdı. ${fmtP(m.entry)} retest'i short bölgesi; aralarda TP alın, stop->entry yapın. TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} üstü kapanış = stop.`
+      : `⚡ ${sym} | Setup — Fiyat destek bölgesinden likidite alıp yapıyı kırdı. ${fmtP(m.entry)} retest'i long bölgesi; aralarda TP alın, stop->entry yapın. TP1 ${fmtP(m.tp1??m.dol)}, TP2 ${fmtP(m.dol)}. ${fmtP(m.stop)} altı kapanış = stop.`;
     ctx.font = '11px system-ui';
     const tw = Math.min(360, ctx.measureText(note).width + 14);
     const nx = Math.max(6, Math.min(chartW()-tw-8, px(m.entryBar)-tw/2));
@@ -977,7 +982,7 @@ function renderPanel(){
     ${ef && m.tp1!==undefined ? `<tr><td>TP1 (ilk bölge · %50 kapat)</td><td>${fmtP(m.tp1)}</td></tr>` : ''}
     <tr><td>${ef?'TP2 (karşı likidite)':'Hedef (DOL)'}</td><td>${fmtP(m.dol)}</td></tr>
     <tr><td>R : R</td><td>${rr}</td></tr>
-    ${ef && m.entry!==undefined ? `<tr><td colspan="2" style="color:var(--muted);font-size:11.5px">TP1 sonrası stop → giriş (BE) çekilir, kalan %50 TP2'ye taşınır.</td></tr>` : ''}`;
+    ${ef && m.entry!==undefined ? `<tr><td colspan="2" style="color:var(--muted);font-size:11.5px">TP1'de kâr alın, <b>stop->entry</b> yapın; kalan pozisyon TP2'ye. ${sell?'Stop üstü':'Stop altı'} kapanış = çıkış.</td></tr>` : ''}`;
   const wantFlow = sell ? 'Bearish' : 'Bullish';
   const range = Math.abs(m.stop - m.dol) || 1;
   // giriş, dealing range'in premium (sell) / discount (buy) tarafında mı?
