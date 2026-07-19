@@ -70,6 +70,9 @@
       <option value="Day1">1G</option>
     </select>
     <button id="scan" class="primary">Tara 🔍</button>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer" title="Backtest'e göre önerilen mod: sadece HTF orderflow yönüyle uyumlu modelleri göster">
+      <input type="checkbox" id="ofFilter" checked> OF uyumlu
+    </label>
   </div>
   <div class="chips" id="chips"></div>
   <div id="modelnav">
@@ -84,7 +87,7 @@
   </div>
   <div id="side">
     <h2>Model Bilgisi</h2>
-    <div id="nomodel">Bu grafikte tamamlanmış/oluşan bir MMXM modeli bulunamadı. Farklı bir zaman dilimi veya coin dene.</div>
+    <div id="nomodel">Bu grafikte gösterilecek MMXM modeli yok. "OF uyumlu" filtresini kapatmayı ya da farklı bir zaman dilimi/coin denemeyi dene.</div>
     <table class="info" id="minfo"></table>
     <h2 id="clTitle">Checklist</h2>
     <div id="checks"></div>
@@ -394,7 +397,7 @@ function detectAll(c){
 
 /* ================= grafik ================= */
 const cv = $('chart'), ctx = cv.getContext('2d');
-let candles = [], models = [], mIdx = 0, orderflow = 'Nötr', srcName = '';
+let candles = [], models = [], allModels = [], mIdx = 0, orderflow = 'Nötr', srcName = '';
 let view = {first:0, count:200};
 let mouse = null, dragging = null;
 let yman = null;   // manuel dikey aralık (sürükleyince devreye girer)
@@ -737,7 +740,7 @@ function renderPanel(){
   $('minfo').innerHTML = `
     <tr><td>Model</td><td><span class="badge ${sell?'sell':'buy'}">${sell?'MM SELL MODEL':'MM BUY MODEL'}</span></td></tr>
     <tr><td>Durum</td><td><span class="badge ${stc}">${stt}</span></td></tr>
-    <tr><td>HTF Orderflow</td><td>${orderflow}</td></tr>
+    <tr><td>HTF Orderflow (girişte)</td><td>${m.of || orderflow} ${m.ofOk ? '✓' : '✗'}</td></tr>
     <tr><td>Giriş (FVG)</td><td>${m.entry!==undefined?fmtP(m.entry):'bekleniyor'}</td></tr>
     <tr><td>Stop (SMR üstü)</td><td>${fmtP(m.stop)}</td></tr>
     <tr><td>Hedef (DOL)</td><td>${fmtP(m.dol)}</td></tr>
@@ -750,7 +753,7 @@ function renderPanel(){
     Math.abs(m.entry - m.dol) / range > 0.5;
   const checks = [
     ['HTF (Orderflow) yönünü belirle — ' + (sell?'Bearish mi?':'Bullish mi?'),
-      orderflow === wantFlow, orderflow === 'Nötr'],
+      m.of === wantFlow, m.of === 'Nötr'],
     ['DOL (Draw on Liquidity) — likidite çizimi belirlendi mi?', m.dolIdx >= 0, false],
     [(sell ? 'HTF Premium PD Array / buyside likiditesi alındıktan sonra SMR'
            : 'HTF Discount PD Array / sellside likiditesi alındıktan sonra SMR')
@@ -790,18 +793,29 @@ async function scan(){
     candles = r.candles; srcName = r.src;
     pickDecimals(candles);
     orderflow = htfOrderflow(candles);
-    models = detectAll(candles);
-    mIdx = 0;
-    fitView();
-    renderPanel();
-    draw();
-    setStatus(`${candles.length} mum · ${models.length} model · ${srcName}`);
+    allModels = detectAll(candles);
+    // her model için giriş anındaki (causal) HTF orderflow
+    for(const m of allModels){
+      const eb = m.entryBar || (m.msbBar > 0 ? m.msbBar : m.smr.i);
+      m.of = htfOrderflow(candles.slice(Math.max(0, eb-800), eb));
+      m.ofOk = (m.dir==='sell' && m.of==='Bearish') || (m.dir==='buy' && m.of==='Bullish');
+    }
+    applyFilter();
   }catch(e){
     setStatus('HATA: ' + e.message);
   }finally{
     $('scan').disabled = false;
   }
 }
+function applyFilter(){
+  models = $('ofFilter').checked ? allModels.filter(m=>m.ofOk) : allModels;
+  mIdx = 0;
+  fitView();
+  renderPanel();
+  draw();
+  setStatus(`${candles.length} mum · ${models.length}/${allModels.length} model · ${srcName}`);
+}
+$('ofFilter').onchange = applyFilter;
 $('scan').onclick = scan;
 $('symbol').addEventListener('keydown', e=>{ if(e.key==='Enter') scan(); });
 $('interval').onchange = scan;
